@@ -24,7 +24,13 @@ jobs:
           const context = {window:{}};
           vm.runInNewContext(fs.readFileSync('config.js','utf8'), context);
           const c = context.window.PODHOD_CONFIG;
-          const configured = c.backend === 'supabase' && !!c.supabaseUrl && !!c.supabasePublishableKey;
+          const key = c.supabasePublishableKey || '';
+          let publicKey = key.startsWith('sb_publishable_');
+          if (key.startsWith('eyJ')) {
+            try { publicKey = JSON.parse(Buffer.from(key.split('.')[1], 'base64url').toString()).role === 'anon'; } catch {}
+          }
+          if (key && !publicKey) throw new Error('Only a Publishable or anon public key may be published.');
+          const configured = c.backend === 'supabase' && /^https:\/\/[a-z0-9-]+\.supabase\.co$/.test(c.supabaseUrl) && publicKey;
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `configured=${configured}\n`);
           if (!configured) console.log('::notice::Add the public Supabase URL and Publishable key to config.js to enable deployment.');
           JS
