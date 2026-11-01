@@ -22,12 +22,13 @@ with tempfile.TemporaryDirectory() as directory:
  def route_api(route):
   global confirmation
   request=route.request;path=request.url.split('.co')[1];data=request.post_data_json if request.post_data else {}
-  headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS','Content-Type':'application/json'}
+  headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS','Content-Type':'application/json','X-Supabase-Api-Version':'2024-01-01','Access-Control-Expose-Headers':'X-Supabase-Api-Version'}
   def respond(body,status=200):route.fulfill(status=status,headers=headers,body=json.dumps(body))
   if request.method=='OPTIONS':return respond({})
   token=request.headers.get('authorization','').removeprefix('Bearer ');uid=tokens.get(token)
   if path.startswith('/auth/v1/signup') or path.startswith('/auth/v1/token'):
    email=data['email']
+   if email=='broken@example.com':return respond({'code':'deployment_unavailable','msg':'PRIVATE_RESPONSE_DO_NOT_SHOW'},400)
    if path.startswith('/auth/v1/signup'):
     if email in users:return respond({'code':'user_already_exists','msg':'Already registered'},422)
     users[email]={'id':secrets.token_hex(8),'email':email,'aud':'authenticated','role':'authenticated'}
@@ -59,6 +60,11 @@ with tempfile.TemporaryDirectory() as directory:
    errors=[]
    def context():
     c=browser.new_context();c.route('https://example.supabase.co/**',route_api);return c
+   failed_context=context();failed=failed_context.new_page();failed.goto(base)
+   failed.locator('#login').fill('broken@example.com');failed.locator('#password').fill('password-12345');failed.locator('#auth-submit').click()
+   failed.wait_for_function("() => document.querySelector('#auth-status').textContent.includes('Вход · deployment_unavailable · HTTP 400')")
+   assert 'PRIVATE_RESPONSE' not in failed.locator('#auth-status').inner_text()
+   assert not failed.locator('main').is_visible();failed_context.close()
    c=context();page=c.new_page();page.on('pageerror',lambda e:errors.append(str(e)));page.goto(base)
    page.locator('#register-tab').click();page.locator('#login').fill('alice@example.com');page.locator('#password').fill('password-12345');page.locator('#auth-submit').click()
    page.locator('#workout-name').fill('В облаке');page.locator('#completed').check();page.locator('button[type=submit]').filter(has_text='Сохранить').click()

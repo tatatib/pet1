@@ -56,3 +56,30 @@ test('avatars use authenticated user metadata and reject arbitrary uploads',asyn
   assert.equal(request.data.avatar,'panda');assert.equal(result.user.avatar,'panda');
   await assert.rejects(api('profile','PUT',{avatar:'https://untrusted.example/avatar.svg'}),/из списка/);
 });
+
+test('sign-in errors identify the failed operation without exposing raw responses',async()=>{
+  const mock=client();
+  mock.auth.signInWithPassword=async()=>({error:{code:'deployment_unavailable',status:400,message:'PRIVATE_RESPONSE_DO_NOT_SHOW'},data:{}});
+  await assert.rejects(adapter(mock)('login','POST',{login:'a@example.com',password:'password123'}),error=>{
+    assert.match(error.message,/Вход · deployment_unavailable · HTTP 400/);
+    assert.doesNotMatch(error.message,/PRIVATE_RESPONSE/);return true;
+  });
+  mock.auth.signInWithPassword=async()=>({error:{name:'AuthRetryableFetchError',message:'Failed to fetch',status:0},data:{}});
+  await assert.rejects(adapter(mock)('login','POST',{login:'a@example.com',password:'password123'}),/Вход · NETWORK/);
+});
+test('session and database errors are distinct from invalid credentials',async()=>{
+  const mock=client();
+  mock.auth.getSession=async()=>({error:{code:'refresh_token_not_found',status:400},data:{}});
+  await assert.rejects(adapter(mock)('me'),/Восстановление сессии · refresh_token_not_found/);
+  mock.from=()=>({select:()=>({maybeSingle:async()=>({error:{code:'42501',message:'PRIVATE_DATABASE_RESPONSE'},status:403,data:null})})});
+  await assert.rejects(adapter(mock)('workouts'),error=>{
+    assert.match(error.message,/База отклонила доступ/);assert.match(error.message,/Загрузка тренировок · 42501 · HTTP 403/);
+    assert.doesNotMatch(error.message,/PRIVATE_DATABASE_RESPONSE/);return true;
+  });
+});
+
+test('legacy Auth responses without an error code still explain wrong credentials',async()=>{
+  const mock=client();
+  mock.auth.signInWithPassword=async()=>({error:{status:400,message:'Invalid login credentials'},data:{}});
+  await assert.rejects(adapter(mock)('login','POST',{login:'a@example.com',password:'password123'}),/Неверная почта или пароль.*Вход · invalid_credentials · HTTP 400/);
+});
