@@ -34,7 +34,6 @@ let authMode = 'login';
 const config = window.PODHOD_CONFIG || {};
 const cloudMode = config.backend !== 'local';
 let cloudApi;
-let recoveryMode = false;
 let localWorkouts = {};
 try {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -67,7 +66,6 @@ async function enterAccount(user) {
   const data=await api('workouts');
   if(!validWorkouts(data.workouts)) throw new Error('Не удалось прочитать историю аккаунта.');
   currentUser=user; workouts=data.workouts;revision=data.revision;dirty=false;
-  if(recoveryMode) return;
   $('password').value='';$('auth-screen').hidden=true;document.querySelector('main').hidden=false;
   $('logout').hidden=false;$('account-label').textContent=user.login;
   renderAccountAvatar();
@@ -83,7 +81,7 @@ for (const mode of ['login','register']) $(`${mode}-tab`).addEventListener('clic
   $('register-tab').setAttribute('aria-pressed',String(mode==='register'));
   $('password').autocomplete=mode==='login'?'current-password':'new-password';
   $('auth-submit').textContent=mode==='login'?'Войти':'Создать аккаунт';
-  $('auth-hint').textContent=cloudMode ? (mode==='login'?'Войди с почтой и паролем своего аккаунта.':'Используй свою почту и пароль от 10 символов. Если включено подтверждение почты, проверь входящие и спам.') : (mode==='login'?'Используй логин, указанный при регистрации.':'Логин: 3–32 латинские буквы, цифры, точка, дефис или _.');
+  $('auth-hint').textContent=cloudMode ? (mode==='login'?'Войди с почтой и паролем своего аккаунта.':'Используй почту как логин и пароль от 10 символов. Писем не будет — сохрани пароль, восстановление по почте отключено.') : (mode==='login'?'Используй логин, указанный при регистрации.':'Логин: 3–32 латинские буквы, цифры, точка, дефис или _.');
   $('auth-status').textContent='';
 });
 $('auth-form').addEventListener('submit',async event=>{
@@ -119,12 +117,7 @@ async function bootstrap() {
       $('login').type='email';$('login').removeAttribute('pattern');$('login').removeAttribute('minlength');$('login').maxLength=254;
       $('login').placeholder='you@example.com';$('login').autocomplete='email';
       $('auth-hint').textContent='Войди с почтой и паролем своего аккаунта.';
-      $('forgot-password').hidden=!config.emailRecoveryEnabled;
       cloudApi=createCloudBackend(config,window.PodhodSupabase,event=>{
-        if(event==='PASSWORD_RECOVERY') {
-          recoveryMode=true;document.querySelector('main').hidden=true;$('auth-screen').hidden=false;
-          $('auth-form').hidden=true;$('recovery-form').hidden=false;
-        }
         if(event==='SIGNED_OUT' && currentUser && !busy) {
           currentUser=null;workouts={};revision=0;dirty=false;refresh();
           document.querySelector('main').hidden=true;$('auth-screen').hidden=false;$('logout').hidden=true;$('avatar-button').hidden=true;$('avatar-dialog').close();
@@ -139,7 +132,7 @@ async function bootstrap() {
   }
   try {
     const {user}=await api('me');
-    if(user && !recoveryMode) await enterAccount(user);
+    if(user) await enterAccount(user);
     else {$('auth-status').textContent='';$('account-label').textContent='Войди в аккаунт';}
   } catch(error) {
     $('auth-status').textContent=location.protocol==='file:'?'Открой сайт через GitHub Pages или локальный веб-сервер.':error.message;
@@ -251,29 +244,6 @@ $('import-file').addEventListener('change',async event=>{
   } catch(error) {status(error.message,true);}
   finally {event.target.value='';}
 });
-$('forgot-password').addEventListener('click',async()=>{
-  if(busy)return;
-  if(!$('login').checkValidity() || !$('login').value) {$('login').reportValidity();return;}
-  busy=true;$('auth-form').inert=true;
-  try {
-    await api('reset-password','POST',{email:$('login').value.trim()});
-    $('auth-status').textContent='Если аккаунт существует, на почту придёт ссылка для смены пароля.';
-  } catch(error) {$('auth-status').textContent=error.message;}
-  finally {busy=false;$('auth-form').inert=false;}
-});
-$('recovery-form').addEventListener('submit',async event=>{
-  event.preventDefault();if(busy)return;busy=true;$('recovery-form').inert=true;
-  try {
-    await api('update-password','POST',{password:$('new-password').value});
-    // Require a normal sign-in after password recovery.
-    await api('logout','POST',{});
-    recoveryMode=false;currentUser=null;workouts={};revision=0;dirty=false;refresh();
-    $('new-password').value='';$('recovery-form').hidden=true;$('auth-form').hidden=false;$('logout').hidden=true;$('avatar-button').hidden=true;$('avatar-dialog').close();
-    $('account-label').textContent='Войди в аккаунт';$('auth-status').textContent='Пароль изменён. Войди с новым паролем.';
-  } catch(error) {$('recovery-status').textContent=error.message;}
-  finally {busy=false;$('recovery-form').inert=false;}
-});
-
 let chosenAvatar = 'fox';
 function renderAccountAvatar() {
   const avatar=animalAvatar(currentUser?.avatar);

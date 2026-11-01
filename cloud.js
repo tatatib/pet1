@@ -14,15 +14,14 @@ function createCloudBackend(config, sdk, onAuthEvent) {
   if (!sdk) throw new Error('Не удалось загрузить модуль аккаунтов. Обнови страницу.');
   const client = sdk.createClient(url, key, {auth: {flowType:'pkce', persistSession:true, autoRefreshToken:true, detectSessionInUrl:true}});
   client.auth.onAuthStateChange((event) => { setTimeout(() => onAuthEvent(event), 0); });
-  const callbackUrl = new URL('./', location.href).href;
   const fail = (error, operation, responseStatus) => {
     if (!error) return;
     const messages = {
       invalid_credentials: 'Неверная почта или пароль.',
       invalid_api_key: 'Публичный ключ проекта отклонён. Владельцу сайта нужно проверить ключ в Supabase.',
-      email_not_confirmed: 'Сначала подтверди почту по ссылке из письма.',
+      email_not_confirmed: 'Для этого аккаунта ещё требуется подтверждение. Владельцу проекта нужно выключить Confirm email и проверить статус аккаунта в Supabase.',
       user_already_exists: 'Такой аккаунт уже зарегистрирован.',
-      over_email_send_rate_limit: 'Превышен лимит писем. Попробуй позже.',
+      over_email_send_rate_limit: 'Supabase всё ещё пытается отправить письмо. Владельцу проекта нужно выключить Confirm email.',
       over_request_rate_limit: 'Слишком много попыток. Попробуй позже.',
       signup_disabled: 'Регистрация временно отключена.',
       weak_password: 'Пароль слишком простой. Используй более длинный и сложный пароль.',
@@ -86,11 +85,21 @@ function createCloudBackend(config, sdk, onAuthEvent) {
     }
     if (path === 'register' || path === 'login') {
       const credentials = {email:body.login.trim(),password:body.password};
+      if (path === 'register') {
+        // Do not call signup while the provider would send a confirmation email.
+        // This public settings endpoint requires only the public API key.
+        let response;
+        try { response=await fetch(`${url}/auth/v1/settings`,{headers:{apikey:key},cache:'no-store',credentials:'omit'}); }
+        catch { fail({name:'AuthRetryableFetchError',message:'Failed to fetch'},'Проверка регистрации'); }
+        const settings=await response.json().catch(()=>null);
+        if(!response.ok) fail({code:settings?.code,message:settings?.message,status:response.status},'Проверка регистрации');
+        if(settings?.mailer_autoconfirm !== true) throw new Error('Регистрация без писем ещё не включена. Владельцу сайта нужно выключить Confirm email в Supabase → Authentication → Sign In / Providers → Email. Письмо не отправлено.');
+      }
       const result = path === 'register'
-        ? await client.auth.signUp({...credentials,options:{emailRedirectTo:callbackUrl}})
+        ? await client.auth.signUp(credentials)
         : await client.auth.signInWithPassword(credentials);
       fail(result.error,path === 'register' ? 'Регистрация' : 'Вход');
-      return {user:result.data.session ? userInfo(result.data.user) : null, message:'Проверь почту: если регистрация доступна, придёт ссылка подтверждения. После подтверждения войди в аккаунт.'};
+      return {user:result.data.session ? userInfo(result.data.user) : null, message:'Аккаунт не открыт. Попробуй войти; если это новая регистрация, владельцу сайта нужно проверить настройки аккаунтов в Supabase.'};
     }
     if (path === 'profile' && method === 'PUT') {
       if (!['fox','cat','bear','wolf','rabbit','tiger','panda'].includes(body.avatar)) throw new Error('Выбери животное из списка.');
@@ -98,12 +107,6 @@ function createCloudBackend(config, sdk, onAuthEvent) {
       return {user:userInfo(result.data.user)};
     }
     if (path === 'logout') { const result=await client.auth.signOut({scope:'local'}); fail(result.error,'Выход'); return {ok:true}; }
-    if (path === 'reset-password') {
-      const result=await client.auth.resetPasswordForEmail(body.email,{redirectTo:callbackUrl});fail(result.error,'Письмо для смены пароля');return {ok:true};
-    }
-    if (path === 'update-password') {
-      const result=await client.auth.updateUser({password:body.password});fail(result.error,'Смена пароля');return {ok:true};
-    }
     if (path === 'workouts' && method === 'GET') {
       const result=await client.from('workout_state').select('workouts,revision').maybeSingle();fail(result.error,'Загрузка тренировок',result.status);
       return result.data || {workouts:{},revision:0};

@@ -4,8 +4,8 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const code = fs.readFileSync('cloud.js','utf8');
 const config = {supabaseUrl:'https://example.supabase.co',supabasePublishableKey:'sb_publishable_test'};
-function adapter(client) {
-  const context = {location:{href:'https://tatatib.github.io/pet1/index.html'},URL,atob,setTimeout};
+function adapter(client, autoconfirm=true) {
+  const context = {location:{href:'https://tatatib.github.io/pet1/index.html'},URL,atob,setTimeout,fetch:async()=>({ok:true,json:async()=>({mailer_autoconfirm:autoconfirm})})};
   vm.createContext(context);vm.runInContext(code,context);
   return context.createCloudBackend(config,{createClient:()=>client},()=>{});
 }
@@ -23,12 +23,18 @@ test('empty sessions and missing workout rows are normal',async()=>{
   const api=adapter(client());assert.equal((await api('me')).user,null);
   assert.deepEqual(JSON.parse(JSON.stringify(await api('workouts'))),{workouts:{},revision:0});
 });
-test('signup without a session asks for confirmation and keeps project subpath',async()=>{
+test('registration is immediate and does not request email redirects',async()=>{
   const mock=client();let request;
-  mock.auth.signUp=async input=>{request=input;return {data:{user:{email:'a@example.com'},session:null},error:null};};
+  mock.auth.signUp=async input=>{request=input;return {data:{user:{email:'a@example.com'},session:{}},error:null};};
   const result=await adapter(mock)('register','POST',{login:' a@example.com ',password:'password123'});
-  assert.equal(result.user,null);assert.match(result.message,/подтверждения/);
-  assert.equal(request.email,'a@example.com');assert.equal(request.options.emailRedirectTo,'https://tatatib.github.io/pet1/');
+  assert.equal(result.user.login,'a@example.com');assert.equal(request.email,'a@example.com');
+  assert.equal('options' in request,false);
+});
+test('signup is never called when confirmation emails are enabled or settings are unknown',async()=>{
+  const mock=client();let called=false;
+  mock.auth.signUp=async()=>{called=true;throw new Error('Unexpected signup');};
+  for(const setting of [false,null]) await assert.rejects(adapter(mock,setting)('register','POST',{login:'a@example.com',password:'password123'}),/выключить Confirm email/);
+  assert.equal(called,false);
 });
 test('password login and optimistic saves pass identity only via Supabase session',async()=>{
   const mock=client();let request;
@@ -40,13 +46,12 @@ test('password login and optimistic saves pass identity only via Supabase sessio
   mock.rpc=async()=>({error:{code:'PT409'}});
   await assert.rejects(api('workouts','PUT',{workouts:{},revision:2}),/другой вкладке/);
 });
-test('recovery and signout use supported Supabase operations',async()=>{
-  const mock=client();let reset,changed,scope;
-  mock.auth.resetPasswordForEmail=async(email,options)=>{reset={email,options};return {};};
-  mock.auth.updateUser=async(data)=>{changed=data;return {};};
+test('signout remains available but email recovery endpoints are removed',async()=>{
+  const mock=client();let scope;
   mock.auth.signOut=async(data)=>{scope=data.scope;return {};};
-  const api=adapter(mock);await api('reset-password','POST',{email:'a@example.com'});await api('update-password','POST',{password:'a-new-password'});await api('logout','POST');
-  assert.equal(reset.options.redirectTo,'https://tatatib.github.io/pet1/');assert.equal(changed.password,'a-new-password');assert.equal(scope,'local');
+  const api=adapter(mock);await api('logout','POST');assert.equal(scope,'local');
+  await assert.rejects(api('reset-password','POST',{email:'a@example.com'}),/Неизвестный запрос/);
+  await assert.rejects(api('update-password','POST',{password:'a-new-password'}),/Неизвестный запрос/);
 });
 
 test('avatars use authenticated user metadata and reject arbitrary uploads',async()=>{

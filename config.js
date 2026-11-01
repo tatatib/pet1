@@ -2,6 +2,5 @@
 window.PODHOD_CONFIG = {
   backend: 'supabase', // 'local' retains the older Python/SQLite mode.
   supabaseUrl: 'https://llddamrspbpcddykrlss.supabase.co', // e.g. https://your-project.supabase.co
-  supabasePublishableKey: 'sb_publishable_Lcyp5BOlFOOfUcy7_v3c0A_NunHcjvH', // sb_publishable_... or the legacy anon public key
-  emailRecoveryEnabled: false // Enable after setting up a working SMTP sender in Supabase.
+  supabasePublishableKey: 'sb_publishable_Lcyp5BOlFOOfUcy7_v3c0A_NunHcjvH' // sb_publishable_... or the legacy anon public key
 };

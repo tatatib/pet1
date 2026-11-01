@@ -13,7 +13,7 @@ with tempfile.TemporaryDirectory() as directory:
  root=Path(directory);site=root/'pet1';site.mkdir();(site/'vendor').mkdir()
  for name in ['index.html','style.css','app.js','cloud.js','avatars.js','vendor/supabase.js']:
   shutil.copy(PROJECT/name,site/name)
- (site/'config.js').write_text("window.PODHOD_CONFIG={backend:'supabase',supabaseUrl:'https://example.supabase.co',supabasePublishableKey:'sb_publishable_test',emailRecoveryEnabled:true};")
+ (site/'config.js').write_text("window.PODHOD_CONFIG={backend:'supabase',supabaseUrl:'https://example.supabase.co',supabasePublishableKey:'sb_publishable_test'};")
  class Quiet(SimpleHTTPRequestHandler):
   def log_message(self,*args):pass
  server=ThreadingHTTPServer(('127.0.0.1',0),functools.partial(Quiet,directory=directory));threading.Thread(target=server.serve_forever,daemon=True).start()
@@ -25,6 +25,7 @@ with tempfile.TemporaryDirectory() as directory:
   headers={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Headers':'*','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS','Content-Type':'application/json','X-Supabase-Api-Version':'2024-01-01','Access-Control-Expose-Headers':'X-Supabase-Api-Version'}
   def respond(body,status=200):route.fulfill(status=status,headers=headers,body=json.dumps(body))
   if request.method=='OPTIONS':return respond({})
+  if path.startswith('/auth/v1/settings'):return respond({'mailer_autoconfirm':not confirmation})
   token=request.headers.get('authorization','').removeprefix('Bearer ');uid=tokens.get(token)
   if path.startswith('/auth/v1/signup') or path.startswith('/auth/v1/token'):
    email=data['email']
@@ -44,7 +45,6 @@ with tempfile.TemporaryDirectory() as directory:
     return respond(user)
    return respond(next((u for u in users.values() if u['id']==uid),{}))
   if path.startswith('/auth/v1/logout'):return respond({})
-  if path.startswith('/auth/v1/recover'):return respond({})
   if not uid:return respond({'code':'42501','message':'Not authenticated'},401)
   if path.startswith('/rest/v1/workout_state'):
    return respond([histories[uid]] if uid in histories else [])
@@ -109,8 +109,8 @@ with tempfile.TemporaryDirectory() as directory:
    assert page.locator('#site-intro').evaluate("e=>getComputedStyle(e).display")=='none'
 
    page.locator('#logout').click();page.locator('#auth-screen').wait_for(state='visible');confirmation=True
-   page.locator('#register-tab').click();page.locator('#login').fill('confirm@example.com');page.locator('#password').fill('password-12345');page.locator('#auth-submit').click();page.wait_for_function("() => document.querySelector('#auth-status').textContent.includes('подтверждения')");assert not page.locator('main').is_visible()
+   page.locator('#register-tab').click();page.locator('#login').fill('confirm@example.com');page.locator('#password').fill('password-12345');page.locator('#auth-submit').click();page.wait_for_function("() => document.querySelector('#auth-status').textContent.includes('выключить Confirm email')");assert not page.locator('main').is_visible();assert 'confirm@example.com' not in users;assert page.locator('#forgot-password').count()==0
    assert not errors,errors
    browser.close()
-  print('PASS: actual Supabase SDK against mocked Auth/PostgREST; Pages subpath, signup, email confirmation, session reload, two browsers, conflict, isolated account UI, JSON import, split layout, calendar details, seven avatars, profile persistence, mobile dialog, reduced motion, logout')
+  print('PASS: actual Supabase SDK against mocked Auth/PostgREST; Pages subpath, signup without emails, blocking email-enabled signup, session reload, two browsers, conflict, isolated account UI, JSON import, split layout, calendar details, seven avatars, profile persistence, mobile dialog, reduced motion, logout')
  finally:server.shutdown();server.server_close()
