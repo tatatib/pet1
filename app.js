@@ -69,7 +69,10 @@ async function enterAccount(user) {
   currentUser=user; workouts=data.workouts;revision=data.revision;dirty=false;
   if(recoveryMode) return;
   $('password').value='';$('auth-screen').hidden=true;document.querySelector('main').hidden=false;
-  $('logout').hidden=false;$('account-label').textContent=`Аккаунт: ${user.login}`;
+  $('logout').hidden=false;$('account-label').textContent=user.login;
+  renderAccountAvatar();
+  const main=document.querySelector('main');main.classList.remove('dashboard-enter');
+  requestAnimationFrame(()=>main.classList.add('dashboard-enter'));
   $('import-banner').hidden=!Object.keys(localWorkouts).length;
   refresh();
   if(!storageOK) status('Старую историю браузера прочитать не удалось. Она не была изменена.',true);
@@ -99,7 +102,7 @@ $('logout').addEventListener('click',async()=>{
   busy=true;
   try {
     await api('logout','POST',{}); currentUser=null;workouts={};dirty=false;revision=0;refresh();
-    document.querySelector('main').hidden=true;$('auth-screen').hidden=false;$('logout').hidden=true;
+    document.querySelector('main').hidden=true;$('auth-screen').hidden=false;$('logout').hidden=true;$('avatar-button').hidden=true;$('avatar-dialog').close();
     $('account-label').textContent='Войди в аккаунт';$('auth-status').textContent='Ты вышел из аккаунта.';
   } catch(error) {status(error.message,true);}
   finally {busy=false;}
@@ -124,7 +127,7 @@ async function bootstrap() {
         }
         if(event==='SIGNED_OUT' && currentUser && !busy) {
           currentUser=null;workouts={};revision=0;dirty=false;refresh();
-          document.querySelector('main').hidden=true;$('auth-screen').hidden=false;$('logout').hidden=true;
+          document.querySelector('main').hidden=true;$('auth-screen').hidden=false;$('logout').hidden=true;$('avatar-button').hidden=true;$('avatar-dialog').close();
           $('account-label').textContent='Войди в аккаунт';
           $('auth-status').textContent='Сессия завершилась. Войди снова.';
         }
@@ -174,9 +177,13 @@ function renderCalendar() {
   }
 }
 function selectDay(key) {
-  if (dirty && !confirm('Есть несохранённые изменения. Перейти к другой дате без сохранения?')) return;
+  if (dirty && !confirm('Есть несохранённые изменения. Перейти к другой дате без сохранения?')) return false;
   selected=key; const date=fromKey(key); month=new Date(date.getFullYear(),date.getMonth(),1);
   loadForm();renderCalendar();renderStats();
+  const panel=document.querySelector('.workout-panel');
+  if(!matchMedia('(prefers-reduced-motion: reduce)').matches) panel.animate([{opacity:.35,transform:'translateY(8px)'},{opacity:1,transform:'translateY(0)'}],{duration:230,easing:'ease-out'});
+  if(matchMedia('(max-width: 800px)').matches) document.querySelector('.training-column').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'start'});
+  return true;
 }
 function loadForm() {
   const date=fromKey(selected); const w=workouts[selected];
@@ -186,6 +193,7 @@ function loadForm() {
   $('workout-name').value=w?.name || ''; $('notes').value=w?.notes || ''; $('completed').checked=w?.completed || false;
   $('exercise-rows').replaceChildren(); if(w) w.exercises.forEach(addRow); else addRow();
   $('delete-workout').hidden=!w;dirty=false;status('');
+  $('calendar-selection').textContent=`${date.toLocaleDateString('ru-RU',{day:'numeric',month:'long'})} · ${w?(w.completed?'Тренировка выполнена — запись открыта':'План тренировки открыт'):'Пока нет записи. Можно начать новую.'}`;
 }
 function renderStats() {
   const entries=Object.entries(workouts); const completed=entries.filter(([,w])=>w.completed);
@@ -203,7 +211,7 @@ function renderHistory() {
     const date=document.createElement('span');date.className='history-date';date.textContent=fromKey(key).toLocaleDateString('ru-RU',{day:'2-digit',month:'short',year:'numeric'});
     const body=document.createElement('span');body.className='history-body';const name=document.createElement('strong');name.textContent=w.name||'Тренировка';
     const detail=document.createElement('small');detail.textContent=`${[...new Set(w.exercises.map(e=>e.muscle))].join(' / ')} · Упражнений: ${w.exercises.length} · Подходов: ${w.exercises.reduce((s,e)=>s+e.sets,0)}`;
-    body.append(name,detail);const state=document.createElement('span');state.className='history-state';state.textContent=w.completed?'✓ Выполнена':'○ План';card.append(date,body,state);card.addEventListener('click',()=>{selectDay(key);$('workout-form').scrollIntoView({behavior:'smooth',block:'center'});});history.append(card);
+    body.append(name,detail);const state=document.createElement('span');state.className='history-state';state.textContent=w.completed?'✓ Выполнена':'○ План';card.append(date,body,state);card.addEventListener('click',()=>{if(selectDay(key)) $('workout-form').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'center'});});history.append(card);
   });
 }
 $('workout-form').addEventListener('input',()=>{dirty=true;});
@@ -260,8 +268,46 @@ $('recovery-form').addEventListener('submit',async event=>{
     // Require a normal sign-in after password recovery.
     await api('logout','POST',{});
     recoveryMode=false;currentUser=null;workouts={};revision=0;dirty=false;refresh();
-    $('new-password').value='';$('recovery-form').hidden=true;$('auth-form').hidden=false;$('logout').hidden=true;
+    $('new-password').value='';$('recovery-form').hidden=true;$('auth-form').hidden=false;$('logout').hidden=true;$('avatar-button').hidden=true;$('avatar-dialog').close();
     $('account-label').textContent='Войди в аккаунт';$('auth-status').textContent='Пароль изменён. Войди с новым паролем.';
   } catch(error) {$('recovery-status').textContent=error.message;}
   finally {busy=false;$('recovery-form').inert=false;}
 });
+
+let chosenAvatar = 'fox';
+function renderAccountAvatar() {
+  const avatar=animalAvatar(currentUser?.avatar);
+  $('avatar-button').innerHTML=avatarSvg(avatar.id);
+  $('avatar-button').dataset.avatar=avatar.id;
+  $('avatar-button').setAttribute('aria-label',`Аватарка: ${avatar.name}. Изменить`);
+  $('avatar-button').hidden=!currentUser;
+}
+function updateAvatarPreview() {
+  const avatar=animalAvatar(chosenAvatar);
+  $('avatar-preview-image').innerHTML=avatarSvg(avatar.id);
+  $('avatar-preview-name').textContent=avatar.name;
+  document.querySelectorAll('.avatar-option').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.avatar===chosenAvatar)));
+}
+ANIMAL_AVATARS.forEach(avatar=>{
+  const button=document.createElement('button');button.type='button';button.className='avatar-option';
+  button.dataset.avatar=avatar.id;button.setAttribute('aria-pressed','false');
+  button.innerHTML=avatarSvg(avatar.id);const label=document.createElement('span');label.textContent=avatar.name;button.append(label);
+  button.addEventListener('click',()=>{chosenAvatar=avatar.id;updateAvatarPreview();$('avatar-status').textContent='';});
+  $('avatar-options').append(button);
+});
+$('avatar-button').addEventListener('click',()=>{
+  if(busy||!currentUser)return;
+  chosenAvatar=animalAvatar(currentUser.avatar).id;updateAvatarPreview();$('avatar-status').textContent='';$('avatar-dialog').showModal();
+});
+$('close-avatar').addEventListener('click',()=>{if(!busy)$('avatar-dialog').close();});
+$('avatar-dialog').addEventListener('cancel',event=>{if(busy)event.preventDefault();});
+$('save-avatar').addEventListener('click',async()=>{
+  if(busy||!currentUser)return;
+  busy=true;$('avatar-dialog').inert=true;$('avatar-status').textContent='Сохраняем…';
+  try {
+    const result=await api('profile','PUT',{avatar:chosenAvatar});
+    currentUser={...currentUser,...result.user};renderAccountAvatar();$('avatar-dialog').close();
+  } catch(error) {$('avatar-status').textContent=error.message+' Аватарка не изменена.';}
+  finally {busy=false;$('avatar-dialog').inert=false;}
+});
+$('new-today').addEventListener('click',()=>selectDay(todayKey));

@@ -48,3 +48,11 @@ test('recovery and signout use supported Supabase operations',async()=>{
   const api=adapter(mock);await api('reset-password','POST',{email:'a@example.com'});await api('update-password','POST',{password:'a-new-password'});await api('logout','POST');
   assert.equal(reset.options.redirectTo,'https://tatatib.github.io/pet1/');assert.equal(changed.password,'a-new-password');assert.equal(scope,'local');
 });
+
+test('avatars use authenticated user metadata and reject arbitrary uploads',async()=>{
+  const mock=client();let request;
+  mock.auth.updateUser=async(data)=>{request=data;return {data:{user:{email:'a@example.com',user_metadata:{avatar:data.data.avatar}}},error:null};};
+  const api=adapter(mock);const result=await api('profile','PUT',{avatar:'panda'});
+  assert.equal(request.data.avatar,'panda');assert.equal(result.user.avatar,'panda');
+  await assert.rejects(api('profile','PUT',{avatar:'https://untrusted.example/avatar.svg'}),/из списка/);
+});

@@ -71,6 +71,8 @@ class App(ThreadingHTTPServer):
                 CREATE TABLE IF NOT EXISTS sessions (
                     token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires INTEGER NOT NULL);
             ''')
+            if 'avatar' not in [row['name'] for row in db.execute('PRAGMA table_info(users)')]:
+                db.execute("ALTER TABLE users ADD COLUMN avatar TEXT NOT NULL DEFAULT 'fox'")
         os.chmod(db_path, 0o600)
 
     def db(self):
@@ -137,13 +139,13 @@ class Handler(BaseHTTPRequestHandler):
             with self.server.db() as db:
                 user = self.user(db)
                 if path == '/api/me':
-                    return self.respond(200, {'user': {'login': user['login']} if user else None})
+                    return self.respond(200, {'user': {'login': user['login'], 'avatar': user['avatar']} if user else None})
                 if path == '/api/workouts':
                     if not user:
                         return self.respond(401, {'error': 'Войди в аккаунт.'})
                     return self.respond(200, {'workouts': json.loads(user['workouts']), 'revision': user['revision']})
                 return self.respond(404, {'error': 'Не найдено.'})
-        allowed = {'/': ('index.html', 'text/html'), '/index.html': ('index.html', 'text/html'), '/style.css': ('style.css', 'text/css'), '/app.js': ('app.js', 'text/javascript'), '/cloud.js': ('cloud.js', 'text/javascript'), '/config.js': ('config.js', 'text/javascript'), '/vendor/supabase.js': ('vendor/supabase.js', 'text/javascript')}
+        allowed = {'/': ('index.html', 'text/html'), '/index.html': ('index.html', 'text/html'), '/style.css': ('style.css', 'text/css'), '/app.js': ('app.js', 'text/javascript'), '/avatars.js': ('avatars.js', 'text/javascript'), '/cloud.js': ('cloud.js', 'text/javascript'), '/config.js': ('config.js', 'text/javascript'), '/vendor/supabase.js': ('vendor/supabase.js', 'text/javascript')}
         if path not in allowed:
             return self.respond(404, {'error': 'Не найдено.'})
         filename, content_type = allowed[path]
@@ -205,7 +207,8 @@ class Handler(BaseHTTPRequestHandler):
                 token = secrets.token_urlsafe(32)
                 db.execute('INSERT INTO sessions VALUES (?,?,?)', (hashlib.sha256(token.encode()).hexdigest(), user_id, int(time.time())+SESSION_AGE))
                 db.commit()
-                return self.respond(200, {'user': {'login': login}}, self.cookie(token))
+                avatar = db.execute('SELECT avatar FROM users WHERE id=?', (user_id,)).fetchone()['avatar']
+                return self.respond(200, {'user': {'login': login, 'avatar': avatar}}, self.cookie(token))
             user = self.user(db)
             if path == '/api/logout' and self.command == 'POST':
                 token = hashlib.sha256(self.session_token().encode()).hexdigest()
@@ -214,6 +217,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, {'ok': True}, self.cookie('', 0))
             if not user:
                 return self.respond(401, {'error': 'Сессия завершилась. Скачай историю и обнови страницу, чтобы войти снова.'})
+            if path == '/api/profile' and self.command == 'PUT':
+                avatar = data.get('avatar')
+                if avatar not in ('fox','cat','bear','wolf','rabbit','tiger','panda'):
+                    return self.respond(400, {'error': 'Выбери животное из списка.'})
+                db.execute('UPDATE users SET avatar=? WHERE id=?', (avatar, user['id']))
+                db.commit()
+                return self.respond(200, {'user': {'login': user['login'], 'avatar': avatar}})
             if path == '/api/workouts' and self.command == 'PUT':
                 if not valid_workouts(data.get('workouts')) or type(data.get('revision')) is not int:
                     return self.respond(400, {'error': 'Некорректная тренировка.'})

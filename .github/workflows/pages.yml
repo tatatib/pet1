@@ -43,12 +43,13 @@ jobs:
         run: |
           node --check app.js
           node --check cloud.js
+          node --check avatars.js
           npm test
       - name: Prepare static files only
         if: steps.config.outputs.configured == 'true'
         run: |
           mkdir -p _site/vendor
-          cp index.html style.css app.js cloud.js config.js _site/
+          cp index.html style.css app.js cloud.js avatars.js config.js _site/
           cp vendor/supabase.js vendor/THIRD_PARTY_LICENSES.txt _site/vendor/
           touch _site/.nojekyll
       - uses: actions/upload-pages-artifact@v3

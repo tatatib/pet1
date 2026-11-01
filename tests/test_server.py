@@ -48,11 +48,15 @@ class AccountsTest(unittest.TestCase):
     def test_accounts_isolation_conflicts_logout_and_persistence(self):
         self.assertEqual(self.request('/api/workouts')[0], 401)
         first_cookie = self.register()
+        self.assertEqual(self.request('/api/profile', 'PUT', {'avatar': 'panda'})[0], 200)
+        self.assertEqual(self.request('/api/me')[1]['user']['avatar'], 'panda')
+        self.assertEqual(self.request('/api/profile', 'PUT', {'avatar': 'upload.svg'})[0], 400)
         self.assertEqual(self.request('/api/workouts', 'PUT', {'workouts': self.workout(), 'revision': 0})[0], 200)
         self.assertEqual(self.request('/api/workouts', 'PUT', {'workouts': {}, 'revision': 0})[0], 409)
         self.assertEqual(self.request('/api/workouts')[1]['workouts'], self.workout())
         self.cookie = ''
         self.register('another')
+        self.assertEqual(self.request('/api/me')[1]['user']['avatar'], 'fox')
         self.assertEqual(self.request('/api/workouts')[1]['workouts'], {})
         self.assertEqual(self.request('/api/logout', 'POST', {})[0], 200)
         self.assertEqual(self.request('/api/workouts')[0], 401)

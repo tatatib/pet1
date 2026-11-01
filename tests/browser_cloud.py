@@ -1,4 +1,4 @@
-import base64, functools, json, secrets, shutil, tempfile, threading, time
+import base64, functools, json, os, secrets, shutil, tempfile, threading, time
 from pathlib import Path
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from playwright.sync_api import sync_playwright
@@ -11,7 +11,7 @@ PROJECT = Path(__file__).resolve().parents[1]
 
 with tempfile.TemporaryDirectory() as directory:
  root=Path(directory);site=root/'pet1';site.mkdir();(site/'vendor').mkdir()
- for name in ['index.html','style.css','app.js','cloud.js','vendor/supabase.js']:
+ for name in ['index.html','style.css','app.js','cloud.js','avatars.js','vendor/supabase.js']:
   shutil.copy(PROJECT/name,site/name)
  (site/'config.js').write_text("window.PODHOD_CONFIG={backend:'supabase',supabaseUrl:'https://example.supabase.co',supabasePublishableKey:'sb_publishable_test',emailRecoveryEnabled:true};")
  class Quiet(SimpleHTTPRequestHandler):
@@ -37,7 +37,10 @@ with tempfile.TemporaryDirectory() as directory:
    token=jwt(user['id']);tokens[token]=user['id']
    return respond({'access_token':token,'token_type':'bearer','expires_in':3600,'refresh_token':'refresh-'+user['id'],'user':user})
   if path.startswith('/auth/v1/user'):
-   if request.method=='PUT':return respond(next(u for u in users.values() if u['id']==uid))
+   if request.method=='PUT':
+    user=next(u for u in users.values() if u['id']==uid)
+    user.setdefault('user_metadata',{}).update(data.get('data',{}))
+    return respond(user)
    return respond(next((u for u in users.values() if u['id']==uid),{}))
   if path.startswith('/auth/v1/logout'):return respond({})
   if path.startswith('/auth/v1/recover'):return respond({})
@@ -61,7 +64,31 @@ with tempfile.TemporaryDirectory() as directory:
    page.locator('#workout-name').fill('В облаке');page.locator('#completed').check();page.locator('button[type=submit]').filter(has_text='Сохранить').click()
    page.wait_for_function("() => document.querySelector('#status').textContent.includes('сохранена')")
    page.reload();page.locator('#workout-name').wait_for(state='visible');assert page.locator('#workout-name').input_value()=='В облаке'
-   second_context=context();other=second_context.new_page();other.goto(base);other.locator('#login').fill('alice@example.com');other.locator('#password').fill('password-12345');other.locator('#auth-submit').click();other.locator('#workout-name').wait_for(state='visible');assert other.locator('#workout-name').input_value()=='В облаке'
+   # Equal desktop columns, editor left and calendar right.
+   page.wait_for_timeout(900)
+   left=page.locator('.training-column').bounding_box();right=page.locator('.calendar-column').bounding_box()
+   assert left['x']<right['x'] and abs(left['width']-right['width'])<2
+   # Selecting a stored day restores the complete record.
+   saved_day=page.evaluate('selected')
+   page.locator('#prev-month').click();page.locator('#calendar button').first.click()
+   assert page.locator('#workout-name').input_value()==''
+   page.locator('#today').click();assert page.locator('#workout-name').input_value()=='В облаке'
+   assert page.locator('#completed').is_checked()
+   # Seven fixed avatars, persisted in the account and restored on reload.
+   page.locator('#avatar-button').click();assert page.locator('.avatar-option').count()==7
+   page.get_by_role('button',name='Панда',exact=True).click();page.locator('#save-avatar').click()
+   page.locator('#avatar-dialog').wait_for(state='hidden')
+   assert page.locator('#avatar-button').get_attribute('data-avatar')=='panda'
+   page.reload();page.locator('#workout-name').wait_for(state='visible')
+   assert page.locator('#avatar-button').get_attribute('data-avatar')=='panda'
+   page.locator('#avatar-button').click();page.get_by_role('button',name='Тигр',exact=True).click();page.keyboard.press('Escape')
+   assert page.locator('#avatar-button').get_attribute('data-avatar')=='panda'
+   if os.environ.get('PODHOD_SCREENSHOTS'):
+    screenshots=Path(os.environ['PODHOD_SCREENSHOTS']);screenshots.mkdir(parents=True,exist_ok=True)
+    page.screenshot(path=str(screenshots/'split-desktop.png'),full_page=True,animations='disabled')
+    page.locator('#avatar-button').click();page.screenshot(path=str(screenshots/'animal-picker.png'),full_page=True,animations='disabled');page.keyboard.press('Escape')
+
+   second_context=context();other=second_context.new_page();other.goto(base);other.locator('#login').fill('alice@example.com');other.locator('#password').fill('password-12345');other.locator('#auth-submit').click();other.locator('#workout-name').wait_for(state='visible');assert other.locator('#workout-name').input_value()=='В облаке';assert other.locator('#avatar-button').get_attribute('data-avatar')=='panda'
    other.locator('#workout-name').fill('Другая вкладка');other.locator('button[type=submit]').filter(has_text='Сохранить').click();other.wait_for_function("() => document.querySelector('#status').textContent.includes('сохранена')")
    page.locator('#workout-name').fill('Конфликт');page.locator('button[type=submit]').filter(has_text='Сохранить').click();page.wait_for_function("() => document.querySelector('#status').textContent.includes('другой вкладке')")
    page.on('dialog',lambda d:d.accept());page.locator('#logout').click();page.locator('#auth-screen').wait_for(state='visible')
@@ -70,9 +97,14 @@ with tempfile.TemporaryDirectory() as directory:
    page.locator('#import-file').set_input_files({'name':'history.json','mimeType':'application/json','buffer':json.dumps(old).encode()});page.locator('.history-card').wait_for(state='visible');assert 'Старый Mac' in page.locator('.history-card').inner_text()
    page.reload();page.locator('.history-card').wait_for(state='visible');assert 'Старый Mac' in page.locator('.history-card').inner_text()
    page.set_viewport_size({'width':390,'height':844});assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+   page.locator('#avatar-button').click();assert page.evaluate('document.documentElement.scrollWidth<=innerWidth');page.keyboard.press('Escape')
+   if os.environ.get('PODHOD_SCREENSHOTS'):page.screenshot(path=str(screenshots/'split-mobile.png'),full_page=True,animations='disabled')
+   page.emulate_media(reduced_motion='reduce')
+   assert page.locator('#site-intro').evaluate("e=>getComputedStyle(e).display")=='none'
+
    page.locator('#logout').click();page.locator('#auth-screen').wait_for(state='visible');confirmation=True
    page.locator('#register-tab').click();page.locator('#login').fill('confirm@example.com');page.locator('#password').fill('password-12345');page.locator('#auth-submit').click();page.wait_for_function("() => document.querySelector('#auth-status').textContent.includes('подтверждения')");assert not page.locator('main').is_visible()
    assert not errors,errors
    browser.close()
-  print('PASS: actual Supabase SDK against mocked Auth/PostgREST; Pages subpath, signup, email confirmation, session reload, two browsers, conflict, isolated account UI, JSON import, mobile, logout')
+  print('PASS: actual Supabase SDK against mocked Auth/PostgREST; Pages subpath, signup, email confirmation, session reload, two browsers, conflict, isolated account UI, JSON import, split layout, calendar details, seven avatars, profile persistence, mobile dialog, reduced motion, logout')
  finally:server.shutdown();server.server_close()

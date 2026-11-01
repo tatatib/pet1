@@ -34,7 +34,7 @@ function createCloudBackend(config, sdk, onAuthEvent) {
     };
     throw new Error(messages[error.code] || 'Не удалось выполнить запрос к Supabase. Проверь соединение и настройки проекта.');
   };
-  const userInfo = user => user ? {login:user.email} : null;
+  const userInfo = user => user ? {login:user.email,avatar:user.user_metadata?.avatar || 'fox'} : null;
   return async function cloudApi(path, method='GET', body={}) {
     if (path === 'me') {
       const session = await client.auth.getSession(); fail(session.error);
@@ -49,6 +49,11 @@ function createCloudBackend(config, sdk, onAuthEvent) {
         : await client.auth.signInWithPassword(credentials);
       fail(result.error);
       return {user:result.data.session ? userInfo(result.data.user) : null, message:'Проверь почту: если регистрация доступна, придёт ссылка подтверждения. После подтверждения войди в аккаунт.'};
+    }
+    if (path === 'profile' && method === 'PUT') {
+      if (!['fox','cat','bear','wolf','rabbit','tiger','panda'].includes(body.avatar)) throw new Error('Выбери животное из списка.');
+      const result=await client.auth.updateUser({data:{avatar:body.avatar}});fail(result.error);
+      return {user:userInfo(result.data.user)};
     }
     if (path === 'logout') { const result=await client.auth.signOut({scope:'local'}); fail(result.error); return {ok:true}; }
     if (path === 'reset-password') {
