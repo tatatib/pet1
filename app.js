@@ -20,10 +20,10 @@ let workouts = {};
 let dirty = false;
 let storageOK = true;
 function validWorkouts(data) {
-  return data && typeof data === 'object' && !Array.isArray(data) && Object.entries(data).every(([key,w]) =>
+  return data && typeof data === 'object' && !Array.isArray(data) && Object.keys(data).length <= 10000 && Object.entries(data).every(([key,w]) =>
     /^\d{4}-\d{2}-\d{2}$/.test(key) && !Number.isNaN(fromKey(key).getTime()) && dateKey(fromKey(key)) === key && w &&
-    typeof w.name === 'string' && typeof w.notes === 'string' && typeof w.completed === 'boolean' &&
-    Array.isArray(w.exercises) && w.exercises.length > 0 && w.exercises.every(e => EXERCISES[e.muscle]?.includes(e.exercise) &&
+    typeof w.name === 'string' && w.name.length <= 80 && typeof w.notes === 'string' && w.notes.length <= 2000 && typeof w.completed === 'boolean' &&
+    Array.isArray(w.exercises) && w.exercises.length > 0 && w.exercises.length <= 100 && w.exercises.every(e => e && EXERCISES[e.muscle]?.includes(e.exercise) &&
       Number.isInteger(e.sets) && e.sets >= 1 && e.sets <= 100 && Number.isInteger(e.reps) && e.reps >= 1 && e.reps <= 1000 &&
       Number.isFinite(e.weight) && e.weight >= 0 && e.weight <= 2000));
 }
@@ -31,6 +31,10 @@ let revision = 0;
 let currentUser = null;
 let busy = false;
 let authMode = 'login';
+const config = window.PODHOD_CONFIG || {};
+const cloudMode = config.backend !== 'local';
+let cloudApi;
+let recoveryMode = false;
 let localWorkouts = {};
 try {
   const raw = localStorage.getItem(STORAGE_KEY);
@@ -42,6 +46,7 @@ try {
 } catch { storageOK = false; }
 function status(text, error=false) { $('status').textContent=text; $('status').style.color=error?'#ff9b7a':'var(--lime)'; }
 async function api(path, method='GET', body) {
+  if(cloudMode) return cloudApi(path,method,body);
   const response = await fetch(`/api/${path}`, {method, credentials:'same-origin', headers:{'Content-Type':'application/json','X-Podhod':'1'}, ...(body === undefined ? {} : {body:JSON.stringify(body)})});
   const data = await response.json().catch(()=>{throw new Error('Не удалось подключиться к серверу. Открой сайт через python3 server.py.');});
   if (!response.ok) throw new Error(data.error || 'Не удалось выполнить запрос.');
@@ -62,6 +67,7 @@ async function enterAccount(user) {
   const data=await api('workouts');
   if(!validWorkouts(data.workouts)) throw new Error('Не удалось прочитать историю аккаунта.');
   currentUser=user; workouts=data.workouts;revision=data.revision;dirty=false;
+  if(recoveryMode) return;
   $('password').value='';$('auth-screen').hidden=true;document.querySelector('main').hidden=false;
   $('logout').hidden=false;$('account-label').textContent=`Аккаунт: ${user.login}`;
   $('import-banner').hidden=!Object.keys(localWorkouts).length;
@@ -74,7 +80,7 @@ for (const mode of ['login','register']) $(`${mode}-tab`).addEventListener('clic
   $('register-tab').setAttribute('aria-pressed',String(mode==='register'));
   $('password').autocomplete=mode==='login'?'current-password':'new-password';
   $('auth-submit').textContent=mode==='login'?'Войти':'Создать аккаунт';
-  $('auth-hint').textContent=mode==='login'?'Используй логин, указанный при регистрации.':'Логин: 3–32 латинские буквы, цифры, точка, дефис или _. Сохрани пароль: восстановление пока не предусмотрено.';
+  $('auth-hint').textContent=cloudMode ? (mode==='login'?'Войди с почтой и паролем своего аккаунта.':'Используй свою почту и пароль от 10 символов. Если включено подтверждение почты, проверь входящие и спам.') : (mode==='login'?'Используй логин, указанный при регистрации.':'Логин: 3–32 латинские буквы, цифры, точка, дефис или _.');
   $('auth-status').textContent='';
 });
 $('auth-form').addEventListener('submit',async event=>{
@@ -82,7 +88,8 @@ $('auth-form').addEventListener('submit',async event=>{
   $('auth-status').textContent='Подключаемся…';
   try {
     const result=await api(authMode,'POST',{login:$('login').value.trim(),password:$('password').value});
-    await enterAccount(result.user);$('auth-status').textContent='';
+    if(result.user) {await enterAccount(result.user);$('auth-status').textContent='';}
+    else {$('auth-status').textContent=result.message;$('password').value='';}
   } catch(error) {$('auth-status').textContent=error.message;}
   finally {busy=false;$('auth-form').inert=false;}
 });
@@ -104,11 +111,35 @@ $('import-local').addEventListener('click',async()=>{
 async function bootstrap() {
   $('auth-form').inert=true;
   try {
+    if(cloudMode) {
+      $('login-label').textContent='Электронная почта';
+      $('login').type='email';$('login').removeAttribute('pattern');$('login').removeAttribute('minlength');$('login').maxLength=254;
+      $('login').placeholder='you@example.com';$('login').autocomplete='email';
+      $('auth-hint').textContent='Войди с почтой и паролем своего аккаунта.';
+      $('forgot-password').hidden=!config.emailRecoveryEnabled;
+      cloudApi=createCloudBackend(config,window.PodhodSupabase,event=>{
+        if(event==='PASSWORD_RECOVERY') {
+          recoveryMode=true;document.querySelector('main').hidden=true;$('auth-screen').hidden=false;
+          $('auth-form').hidden=true;$('recovery-form').hidden=false;
+        }
+        if(event==='SIGNED_OUT' && currentUser && !busy) {
+          currentUser=null;workouts={};revision=0;dirty=false;refresh();
+          document.querySelector('main').hidden=true;$('auth-screen').hidden=false;$('logout').hidden=true;
+          $('account-label').textContent='Войди в аккаунт';
+          $('auth-status').textContent='Сессия завершилась. Войди снова.';
+        }
+      });
+    }
+  } catch(error) {
+    $('auth-status').textContent=error.message;$('account-label').textContent='Настройка сайта';
+    $('auth-form').inert=false;$('auth-submit').disabled=true;return;
+  }
+  try {
     const {user}=await api('me');
-    if(user) await enterAccount(user);
+    if(user && !recoveryMode) await enterAccount(user);
     else {$('auth-status').textContent='';$('account-label').textContent='Войди в аккаунт';}
   } catch(error) {
-    $('auth-status').textContent=location.protocol==='file:'?'Для аккаунтов нужен сервер. Запусти python3 server.py и открой http://localhost:8000.':error.message;
+    $('auth-status').textContent=location.protocol==='file:'?'Открой сайт через GitHub Pages или локальный веб-сервер.':error.message;
     $('account-label').textContent='Нет соединения';
   } finally {$('auth-form').inert=false;}
 }
@@ -200,3 +231,37 @@ $('export').addEventListener('click',()=>{
 window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
 loadForm();renderCalendar();renderStats();renderHistory();
 bootstrap();
+
+$('import-file').addEventListener('change',async event=>{
+  const file=event.target.files[0];if(!file || busy)return;
+  try {
+    if(file.size>2000000) throw new Error('Файл слишком большой (максимум 2 МБ).');
+    const data=JSON.parse(await file.text());
+    if(!validWorkouts(data)) throw new Error('Файл не похож на экспорт истории ПОДХОД.');
+    if(!confirm('Добавить тренировки из файла в аккаунт? При совпадении дат сохранятся записи аккаунта. Несохранённые изменения формы будут потеряны.'))return;
+    if(await persist({...data,...workouts})) {refresh();status('История из файла добавлена в аккаунт.');}
+  } catch(error) {status(error.message,true);}
+  finally {event.target.value='';}
+});
+$('forgot-password').addEventListener('click',async()=>{
+  if(busy)return;
+  if(!$('login').checkValidity() || !$('login').value) {$('login').reportValidity();return;}
+  busy=true;$('auth-form').inert=true;
+  try {
+    await api('reset-password','POST',{email:$('login').value.trim()});
+    $('auth-status').textContent='Если аккаунт существует, на почту придёт ссылка для смены пароля.';
+  } catch(error) {$('auth-status').textContent=error.message;}
+  finally {busy=false;$('auth-form').inert=false;}
+});
+$('recovery-form').addEventListener('submit',async event=>{
+  event.preventDefault();if(busy)return;busy=true;$('recovery-form').inert=true;
+  try {
+    await api('update-password','POST',{password:$('new-password').value});
+    // Require a normal sign-in after password recovery.
+    await api('logout','POST',{});
+    recoveryMode=false;currentUser=null;workouts={};revision=0;dirty=false;refresh();
+    $('new-password').value='';$('recovery-form').hidden=true;$('auth-form').hidden=false;$('logout').hidden=true;
+    $('account-label').textContent='Войди в аккаунт';$('auth-status').textContent='Пароль изменён. Войди с новым паролем.';
+  } catch(error) {$('recovery-status').textContent=error.message;}
+  finally {busy=false;$('recovery-form').inert=false;}
+});

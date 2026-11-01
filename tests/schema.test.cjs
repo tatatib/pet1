@@ -1,0 +1,40 @@
+const {test} = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const {PGlite} = require('@electric-sql/pglite');
+const alice='11111111-1111-4111-8111-111111111111';
+const bob='22222222-2222-4222-8222-222222222222';
+const history={'2026-11-02':{name:'День ног',notes:'',completed:true,exercises:[{muscle:'Ноги',exercise:'Жим ногами',sets:3,reps:10,weight:40}]}};
+test('SQL schema: RLS, atomic revisions, untrusted payloads, and safe rerun',async()=>{
+ const db=new PGlite();
+ try {
+  await db.exec(`create role anon; create role authenticated; create schema auth;
+    create table auth.users(id uuid primary key);
+    create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
+    grant usage on schema auth to authenticated,anon;
+    grant execute on function auth.uid() to authenticated,anon;
+    insert into auth.users values ('${alice}'),('${bob}');`);
+  const schema=fs.readFileSync('supabase/schema.sql','utf8');await db.exec(schema);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='${alice}';`);
+  assert.equal((await db.query('select * from public.workout_state')).rows.length,0);
+  const saved=await db.query('select public.save_workouts($1::jsonb,0) as result',[JSON.stringify(history)]);
+  assert.equal(saved.rows[0].result.revision,1);
+  await assert.rejects(db.query('select public.save_workouts($1::jsonb,0)',[JSON.stringify({})]),e=>e.code==='PT409');
+  assert.deepEqual((await db.query('select workouts from public.workout_state')).rows[0].workouts,history);
+  await assert.rejects(db.query("update public.workout_state set workouts='{}'"),/permission denied/);
+  await db.exec(`set request.jwt.claim.sub='${bob}';`);
+  assert.equal((await db.query('select * from public.workout_state')).rows.length,0);
+  await db.query('select public.save_workouts($1::jsonb,0)',[JSON.stringify({})]);
+  await db.exec('set role anon');
+  await assert.rejects(db.query('select * from public.workout_state'),/permission denied/);
+  await assert.rejects(db.query("select public.save_workouts('{}'::jsonb,0)"),/permission denied/);
+  await db.exec(`set role authenticated; set request.jwt.claim.sub='';`);
+  await assert.rejects(db.query("select public.save_workouts('{}'::jsonb,0)"),e=>e.code==='PT401');
+  await db.exec(`set request.jwt.claim.sub='${alice}';`);
+  const invalid=[null,[],{'2026-02-30':history['2026-11-02']},{'2026-11-02':{...history['2026-11-02'],completed:'yes'}},{'2026-11-02':{...history['2026-11-02'],exercises:[{...history['2026-11-02'].exercises[0],sets:1.5}]}}];
+  for(const payload of invalid) await assert.rejects(db.query('select public.save_workouts($1::jsonb,1)',[JSON.stringify(payload)]),e=>e.code==='PT400');
+  assert.equal((await db.query('select revision from public.workout_state')).rows[0].revision,1);
+  await db.exec('reset role');await db.exec(schema);
+  assert.equal((await db.query('select count(*)::int as n from public.workout_state')).rows[0].n,2);
+ } finally {await db.close();}
+});

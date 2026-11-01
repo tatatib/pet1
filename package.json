@@ -1,0 +1,14 @@
+{
+  "name": "podhod-tracker",
+  "private": true,
+  "version": "1.1.0",
+  "scripts": {
+    "build:vendor": "esbuild tools/vendor-entry.js --bundle --minify --format=iife --global-name=PodhodSupabase --platform=browser --target=es2020 --outfile=vendor/supabase.js",
+    "test": "node --test tests/cloud.test.cjs tests/schema.test.cjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.14",
+    "@supabase/supabase-js": "2.118.0",
+    "esbuild": "0.28.2"
+  }
+}

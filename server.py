@@ -115,7 +115,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'same-origin')
-        self.send_header('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+        self.send_header('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://*.supabase.co; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 
     def session_token(self):
         try:
@@ -143,7 +143,7 @@ class Handler(BaseHTTPRequestHandler):
                         return self.respond(401, {'error': 'Войди в аккаунт.'})
                     return self.respond(200, {'workouts': json.loads(user['workouts']), 'revision': user['revision']})
                 return self.respond(404, {'error': 'Не найдено.'})
-        allowed = {'/': ('index.html', 'text/html'), '/index.html': ('index.html', 'text/html'), '/style.css': ('style.css', 'text/css'), '/app.js': ('app.js', 'text/javascript')}
+        allowed = {'/': ('index.html', 'text/html'), '/index.html': ('index.html', 'text/html'), '/style.css': ('style.css', 'text/css'), '/app.js': ('app.js', 'text/javascript'), '/cloud.js': ('cloud.js', 'text/javascript'), '/config.js': ('config.js', 'text/javascript'), '/vendor/supabase.js': ('vendor/supabase.js', 'text/javascript')}
         if path not in allowed:
             return self.respond(404, {'error': 'Не найдено.'})
         filename, content_type = allowed[path]

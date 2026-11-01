@@ -1,0 +1,65 @@
+name: Publish workout tracker
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.config.outputs.configured }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check public configuration
+        id: config
+        run: |
+          node <<'JS'
+          const fs = require('node:fs');
+          const vm = require('node:vm');
+          const context = {window:{}};
+          vm.runInNewContext(fs.readFileSync('config.js','utf8'), context);
+          const c = context.window.PODHOD_CONFIG;
+          const configured = c.backend === 'supabase' && !!c.supabaseUrl && !!c.supabasePublishableKey;
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `configured=${configured}\n`);
+          if (!configured) console.log('::notice::Add the public Supabase URL and Publishable key to config.js to enable deployment.');
+          JS
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Validate JavaScript and account adapter
+        run: |
+          node --check app.js
+          node --check cloud.js
+          npm test
+      - name: Prepare static files only
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          mkdir -p _site/vendor
+          cp index.html style.css app.js cloud.js config.js _site/
+          cp vendor/supabase.js vendor/THIRD_PARTY_LICENSES.txt _site/vendor/
+          touch _site/.nojekyll
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.config.outputs.configured == 'true'
+        with:
+          path: _site
+  deploy:
+    if: needs.prepare.outputs.configured == 'true'
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
